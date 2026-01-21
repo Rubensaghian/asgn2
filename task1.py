@@ -1,73 +1,108 @@
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 
-BLOCK_SIZE = 16
-BMP_HEADER_SIZE = 54
 
-def pkcs7_pad(data: bytes) -> bytes:
-    padLen = BLOCK_SIZE - (len(data) % BLOCK_SIZE)
-    return data + bytes([padLen] * padLen)
+def ecb_encrypt(path, key=None):
+    # generate random key if not provided
+    if key is None:
+        key = get_random_bytes(16)  # 16 bytes = 128-bits
 
-def ecb_encrypt(plaintext: bytes, key: bytes) -> bytes:
+    # cipher setup and file object init
+    cipher_text = bytearray()
     cipher = AES.new(key, AES.MODE_ECB)
-    ciphertext = b""
+    f = open(path, 'rb')  # read binary mode
 
-    for i in range(0, len(plaintext), BLOCK_SIZE):
-        block = plaintext[i : (i + BLOCK_SIZE)]
-        ciphertext += cipher.encrypt(block)
+    # read 128-bit (16 byte) blocks
+    while block := f.read(16):
+        # add PKCS#7 padding if needed
+        if len(block) < 16:
+            n_padding = 16 - len(block)
+            block += bytes([n_padding] * n_padding)
+        cipher_block = cipher.encrypt(block)
+        cipher_text.extend(cipher_block)
+    f.close()
+    f = open(path.split('.')[0] + "_encrypted", 'wb')
+    f.write(cipher_text)
+    f.close()
+    return
 
-    return ciphertext
 
-def xor_bytes(a: bytes, b: bytes) -> bytes:
-    return bytes(x ^ y for x, y in zip(a, b))
+# encrypt a file at a given path in ECB mode,
+# using key (or randomly generated key if not provided)
+def ecb_encrypt_bmp(path, key=None):
+    # generate random key if not provided
+    if key is None:
+        key = get_random_bytes(16)  # 16 bytes = 128-bit AES key
 
-def cbc_encrypt(plaintext: bytes, key: bytes, iv: bytes) -> bytes:
+    # cipher setup and file object init
+    cipher_text = bytearray()
     cipher = AES.new(key, AES.MODE_ECB)
-    ciphertext = b""
-    prev = iv
 
-    for i in range(0, len(plaintext), BLOCK_SIZE):
-        block = plaintext[i : (i + BLOCK_SIZE)]
-        block = xor_bytes(block, prev)
-        encryptedBlock = cipher.encrypt(block)
-        ciphertext += encryptedBlock
-        prev = encryptedBlock
+    f = open(path, 'rb')  # read binary mode
+    header = f.read(54)  # read the 54-byte BMP header
 
-    return ciphertext
+    # read 128-bit (16 byte) blocks
+    while block := f.read(16):
 
-def encrypt_bmp_ecb(input_file: str, output_file: str):
-    with open(input_file, "rb") as f:
-        bmp = f.read()
+        # add PKCS#7 padding if needed
+        if len(block) < 16:
+            n_padding = 16 - len(block)
+            block += bytes([n_padding] * n_padding)
 
-    header = bmp[:BMP_HEADER_SIZE]
-    body = bmp[BMP_HEADER_SIZE:]
+        cipher_block = cipher.encrypt(block)
+        cipher_text.extend(cipher_block)
 
-    key = get_random_bytes(BLOCK_SIZE)
-    paddedBody = pkcs7_pad(body)
+    f.close()
+    f = open(path.split('.')[0] + "_ECB_encrypted.bmp", 'wb')
+    f.write(header)  # write BMP header unchanged
+    f.write(cipher_text)
+    f.close()
 
-    encryptedBody = ecb_encrypt(paddedBody, key)
+    return
 
-    with open(output_file, "wb") as f:
-        f.write(header + encryptedBody)
 
-def encrypt_bmp_cbc(input_file: str, output_file: str):
-    with open(input_file, "rb") as f:
-        bmp = f.read()
+# encrypt a file at a given path in CBC mode,
+# using key (or randomly generated key if not provided)
+# and IV (or randomly generated IV if not provided)
+def cbc_encrypt_bmp(path, key=None, iv=None):
+    # generate random key and IV if not provided
+    if key is None:
+        key = get_random_bytes(16)  # 128-bits
+    if iv is None:
+        iv = get_random_bytes(16)  # 128-bits
 
-    header = bmp[:BMP_HEADER_SIZE]
-    body = bmp[BMP_HEADER_SIZE:]
+    # cipher setup and file object init
+    cipher_text = bytearray()
+    cipher = AES.new(key, AES.MODE_ECB)
 
-    key = get_random_bytes(BLOCK_SIZE)
-    iv = get_random_bytes(BLOCK_SIZE)
-    paddedBody = pkcs7_pad(body)
+    f = open(path, 'rb')  # read binary mode
+    header = f.read(54)  # read the 54-byte BMP header
 
-    encryptedBody = cbc_encrypt(paddedBody, key, iv)
+    # read 128-bit (16 byte) blocks
+    while block := f.read(16):
 
-    with open(output_file, "wb") as f:
-        f.write(header + encryptedBody)
+        # add PKCS#7 padding if needed
+        if len(block) < 16:
+            n_padding = 16 - len(block)
+            block += bytes([n_padding] * n_padding)
 
-if __name__ == "__main__":
-    encrypt_bmp_ecb("./cp-logo.bmp", "cp-logo-ecb.bmp")
-    encrypt_bmp_cbc("./cp-logo.bmp", "cp-logo-cbc.bmp")
-    encrypt_bmp_ecb("./mustang.bmp", "mustang-ecb.bmp")
-    encrypt_bmp_cbc("./mustang.bmp", "mustang-cbc.bmp")
+        # XOR with IV
+        block = bytes(a ^ b for a, b in zip(block, iv))
+
+        cipher_block = cipher.encrypt(block)
+        iv = cipher_block  # update IV for next block
+        cipher_text.extend(cipher_block)
+
+    f.close()
+    # write encrypted BMP
+    f = open(path.split('.')[0] + "_CBC_encrypted.bmp", 'wb')
+    f.write(header)  # write BMP header unchanged
+    f.write(cipher_text)
+    f.close()
+    return
+
+
+ecb_encrypt_bmp("cp-logo.bmp")
+ecb_encrypt_bmp("mustang.bmp")
+cbc_encrypt_bmp("cp-logo.bmp")
+cbc_encrypt_bmp("mustang.bmp")
